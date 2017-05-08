@@ -37,9 +37,9 @@ void enqueueMessage(char message[]);
 
 void consumeMessageQueue(long nextMinTime);
 
-void queryContainerCapacity(char containerNumber);
+char queryContainerCapacity(char containerNumber);
 
-void displayADResults();
+char displayADResults();
 
 #endif
 

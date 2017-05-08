@@ -43,17 +43,6 @@ void main(void) {
         stateMachine();
         consumeMessageQueue(25000);
     }
-    /*
-    showMessage("Selec Contenedor p/ ver capacidad");
-    while(1) {
-        char pressedKey = getMatrixKey();
-        if(pressedKey != 0) {
-            queryContainer(pressedKey - 1); // Kb indexes are 1-based
-            delay(3000);
-            showMessage("Selec Contenedor p/ ver capacidad");
-        }
-    }
-     * */
 }
 
 void interrupt ISRH(void) { 
@@ -78,11 +67,22 @@ void stateMachine() {
             switch(redirectionState) {
                 case SELECTING:
                     holePositioned = positionHole(targetContainer);
-                    if(holePositioned) redirectionState = SWEEPING;
+                    if(holePositioned) {
+                        if(targetContainer != 0) {
+                            redirectionState = RESETTING;
+                        } else {
+                            redirectionState = SWEEPING;
+                        }
+                    }
                     break;
                 case SWEEPING:
                     itemSweeped = sweepItem();
-                    if(itemSweeped) redirectionState = RESETTING;
+                    if(itemSweeped) {
+                        redirectionState = RESETTING;                        
+                        if(queryContainerCapacity(targetContainer)) {
+                            enqueueMessage("El Contenedor se ha llenado!");                            
+                        }                        
+                    }
                     break;
                 case RESETTING:
                     separatorReady = resetSeparator();
@@ -102,20 +102,22 @@ void stateMachine() {
         case CONTAINER_CONFIG:
             pressedKey = getMatrixKey();
             if(pressedKey == 0x04) { // "A" pressed
-                enqueueMessage("Cambiando estado");
                 switch(selectedContainer) {
                     // "A XOR 1" operation always toggles A
                     case 0:                    
-                        ContainerStatus.containerGeneral = ContainerStatus.containerGeneral ^ 1;
+                        enqueueMessage("Imposible desac. cont. General");
                         break;
                     case 1:                    
                         ContainerStatus.containerAluminium = ContainerStatus.containerAluminium ^ 1;
+                        enqueueMessage("Cambiando estado");
                         break;
                     case 2:
                         ContainerStatus.containerPaper  = ContainerStatus.containerPaper ^ 1;
+                        enqueueMessage("Cambiando estado");
                         break;
                     case 3: 
                         ContainerStatus.containerPlastic = ContainerStatus.containerPlastic ^ 1;
+                        enqueueMessage("Cambiando estado");
                         break;
                 }    
                 enqueueMessage("Inserta basura o Config. Conten."); // Restore initial message
@@ -186,7 +188,7 @@ void initSFRs() {
     TRISD = 0x00;
 }
 
-void queryContainerCapacity(char containerNumber) {
+char queryContainerCapacity(char containerNumber) {
     if(containerNumber == 0) {
         ADCON0 = 0x1; // Query sensor on RA0
     } else if(containerNumber == 1) {
@@ -200,12 +202,12 @@ void queryContainerCapacity(char containerNumber) {
     ADConverted = 0; // Reset the conversion flag, just in case
     ADCON0bits.GO_DONE = 1; // Start conversion    
     while(ADConverted == 0); // Busy wait for conversion to end
-    displayADResults(); // Display the result of the conversion
     PIE1bits.ADIE = 0; // Disable A/D interruptions
     ADConverted = 0; // Turn off the conversion flag    
+    return displayADResults(); // Display the result of the conversion
 }
 
-void displayADResults() {
+char displayADResults() {
     char *resultString;
     char message[32]; // Message to be shown
     float result = (float)(((int)ADRESH << 8) | ADRESL) / 10.24; // Get % as float
@@ -219,6 +221,8 @@ void displayADResults() {
     strcat(message, "%"); // Concatenate
     
     enqueueMessage(message); // Send message to message queue
+    
+    return result > 95;
 }
 
 void showMessage(char message[]) {
@@ -315,26 +319,59 @@ SeparationStates listenForInitialInputs() {
             
             return CONTAINER_CONFIG;        
         }
-    } else if(0) { 
-        // An object was detected inside the separator
-        redirectionState = DEFAULT; // Reset redirection, for precaution.
-        return REDIRECT;
+    } else if(PORTA > 0x0F) { // An object was detected inside the separator
+        delay(20); // Debounce
+        if(PORTA > 0x0F) { // If object still detected
+            redirectionState = DEFAULT; // Reset redirection, for precaution.
+            return REDIRECT;        
+        }
     }
     return WAITING;
 }
 
 char detectTargetContainer() {
+    if(PORTAbits.RA7 && ContainerStatus.containerPlastic && !queryContainerCapacity(3)) {
+        enqueueMessage("Depositando en Cont. Plastico.");
+        return 3;        
+    } else if(PORTAbits.RA6 && ContainerStatus.containerPaper && !queryContainerCapacity(2)) {
+        enqueueMessage("Depositando en Cont. Papel.");
+        return 2;
+    } else if(PORTAbits.RA5 && ContainerStatus.containerAluminium && !queryContainerCapacity(1)) {
+        enqueueMessage("Depositando en Cont. Aluminio.");
+        return 1;
+    } else if(queryContainerCapacity(0)){
+        enqueueMessage("Contenedor General Lleno!");
+    }    
+    enqueueMessage("Depositando en Cont. General.");
     return 0;
 }
 
 char positionHole(char tgtContainer) {
-    return 1;
+    if(    (tgtContainer == 1 && PORTCbits.RC4)
+        || (tgtContainer == 2 && PORTCbits.RC5)
+        || (tgtContainer == 3 && PORTCbits.RC6)
+        || (PORTCbits.RC7)) {
+        PORTEbits.RE1 = 0; // Turn off the motor
+        return 1; //
+    }
+    
+    PORTEbits.RE1 = 1; // Turn on the motor
+    return 0;
 }
 
 char sweepItem() {
+    PORTEbits.RE0 = 1; // Turn on the upper motor
+    delay(400); // Control delay to avoid the need for a proper one-shot
+    while(PORTCbits.RC3 == 0); // Wait until the motor finishes a sweep
+    PORTEbits.RE0 = 0; // Turn off the motor
     return 1;
 }
 
 char resetSeparator() {
-    return 1;
+    if(positionHole(1) && PORTCbits.RC3) {
+        PORTEbits.RE0 = 0; // Turn off upper motor, for precaution
+        return 1;
+    } 
+    PORTEbits.RE0 = PORTCbits.RC3? 0:1; // Have we reached the sensor? if so, stop, else, keep going.
+    return 0;
 }
