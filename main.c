@@ -66,18 +66,26 @@ void stateMachine() {
         case REDIRECT:
             switch(redirectionState) {
                 case SELECTING:
-                    holePositioned = positionHole(targetContainer);
-                    if(holePositioned) {
-                        redirectionState = SWEEPING;
+                    if(queuedMessages == 0) {
+                        holePositioned = positionHole(targetContainer);
+                        if(holePositioned) {
+                            if(targetContainer == 0) {
+                                redirectionState = RESETTING;
+                            } else {
+                                redirectionState = SWEEPING;                            
+                            }
+                        }
                     }
                     break;
                 case SWEEPING:
-                    itemSweeped = sweepItem();
-                    if(itemSweeped) {
-                        redirectionState = RESETTING;     
-                        if(queryContainerCapacity(targetContainer, 1)) {
-                            enqueueMessage("El Contenedor se ha llenado!");                            
-                        }                        
+                    if(queuedMessages == 0) {
+                        itemSweeped = sweepItem();
+                        if(itemSweeped) {
+                            redirectionState = RESETTING;     
+                            if(queryContainerCapacity(targetContainer, 1)) {
+                                enqueueMessage("El Contenedor se ha llenado!");                            
+                            }                        
+                        }
                     }
                     break;
                 case RESETTING:
@@ -91,7 +99,11 @@ void stateMachine() {
                 default:
                     enqueueMessage("Identificando tipo de residuo");
                     targetContainer = detectTargetContainer();
-                    redirectionState = SELECTING;
+                    if(targetContainer == 1) {
+                        redirectionState = SWEEPING; // Aluminum container is always pre-selected
+                    } else {
+                        redirectionState = SELECTING;                    
+                    }
                     
             }
             break;
@@ -369,7 +381,7 @@ char positionHole(char tgtContainer) {
 
 char sweepItem() {
     PORTEbits.RE0 = 1; // Turn on the upper motor
-    delay(5000);
+    delay(2450);
     PORTEbits.RE0 = 0; // Turn off the motor
     return 1; // Function finished its job
 }
