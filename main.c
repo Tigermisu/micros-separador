@@ -133,11 +133,23 @@ void stateMachine() {
 
 void initialize() {
     initSFRs();
+    /*
+    while(1) {
+        PORTEbits.RE0 = 1;
+        while(PORTCbits.RC5 == 0 && !debounceButton(1, 5));
+        PORTEbits.RE0 = 0;
+        delay(3000);
+    }
+    */
     setupLcd();
     disableCursorLcd();
-    initContainers();
+    initContainers();   
+    
     showMessage("Separador de BasuraAutomatico");
-    delay(3000);
+    
+    delay(2000);
+    while(!resetSeparator()); // Wait until separator is ready
+    
     enqueueMessage("Inserta basura o Config. Conten.");
 }
 
@@ -173,19 +185,23 @@ void initSFRs() {
     
     PORTA = 0x00;
     LATA = 0x00;
-    TRISA = 0x0F; // RA0-RA3 as input for A/D conversion 
+    TRISA = 0xFF; // All ports as input
     
     PORTB = 0x00;
     LATB = 0x00;
-    TRISB = 0xF0;
+    TRISB = 0xF0; // Configuration for matrix keyboard
     
     PORTC = 0x00;
     LATC = 0x00;
-    TRISC = 0x00;
+    TRISC = 0xF8; // RC0, RC1 and RC2 as output, rest input
     
     PORTD = 0x00;
     LATD = 0x00;
-    TRISD = 0x00;
+    TRISD = 0x00; // All ports as output for LCD data bus
+    
+    PORTE = 0x00;
+    LATE = 0x00;
+    TRISE = 0x00; // Motors connected to PORTE
 }
 
 char queryContainerCapacity(char containerNumber) {
@@ -222,7 +238,7 @@ char displayADResults() {
     
     enqueueMessage(message); // Send message to message queue
     
-    return result > 95;
+    return result > 95; // Return 1 if the container is practically full
 }
 
 void showMessage(char message[]) {
@@ -323,55 +339,100 @@ SeparationStates listenForInitialInputs() {
         delay(20); // Debounce
         if(PORTA > 0x0F) { // If object still detected
             redirectionState = DEFAULT; // Reset redirection, for precaution.
-            return REDIRECT;        
+            return REDIRECT; // Start redirection in the SM   
         }
     }
-    return WAITING;
+    return WAITING; // Continue waiting
 }
 
 char detectTargetContainer() {
-    if(PORTAbits.RA7 && ContainerStatus.containerPlastic && !queryContainerCapacity(3)) {
-        enqueueMessage("Depositando en Cont. Plastico.");
-        return 3;        
-    } else if(PORTAbits.RA6 && ContainerStatus.containerPaper && !queryContainerCapacity(2)) {
-        enqueueMessage("Depositando en Cont. Papel.");
-        return 2;
-    } else if(PORTAbits.RA5 && ContainerStatus.containerAluminium && !queryContainerCapacity(1)) {
-        enqueueMessage("Depositando en Cont. Aluminio.");
-        return 1;
+    //For each container: If that type of trash was detected, the container is active and not full
+    
+    if(PORTAbits.RA7 && debounceButton(0, 7) && ContainerStatus.containerPlastic && !queryContainerCapacity(3)) {
+        enqueueMessage("Depositando en Cont. Plastico."); // Inform the user of the trash type
+        return 3; // Return the container number
+    } else if(PORTAbits.RA6 && debounceButton(0, 6) && ContainerStatus.containerPaper && !queryContainerCapacity(2)) {
+        enqueueMessage("Depositando en Cont. Papel."); // Inform the user of the trash type
+        return 2; // Return the container number
+    } else if(PORTAbits.RA5 && debounceButton(0, 5) && ContainerStatus.containerAluminium && !queryContainerCapacity(1)) {
+        enqueueMessage("Depositando en Cont. Aluminio."); // Inform the user of the trash type
+        return 1; // Return the container number
     } else if(queryContainerCapacity(0)){
-        enqueueMessage("Contenedor General Lleno!");
+        enqueueMessage("Contenedor General Lleno!"); // Warn about default container full
     }    
-    enqueueMessage("Depositando en Cont. General.");
+    enqueueMessage("Depositando en Cont. General."); // Else, the trash goes to the general container
     return 0;
 }
 
 char positionHole(char tgtContainer) {
-    if(    (tgtContainer == 1 && PORTCbits.RC4)
-        || (tgtContainer == 2 && PORTCbits.RC5)
-        || (tgtContainer == 3 && PORTCbits.RC6)
-        || (PORTCbits.RC7)) {
+    if(    (tgtContainer == 1 && PORTCbits.RC4 && debounceButton(1, 4))
+        || (tgtContainer == 2 && PORTCbits.RC5 && debounceButton(1, 5))
+        || (tgtContainer == 3 && PORTCbits.RC6 && debounceButton(1, 6))
+        || (PORTCbits.RC7 && debounceButton(1, 7))) { // If we have achieved the desired position
         PORTEbits.RE1 = 0; // Turn off the motor
-        return 1; //
+        return 1; // Flag finish
     }
     
     PORTEbits.RE1 = 1; // Turn on the motor
-    return 0;
+    return 0; // Not finished yet
 }
 
 char sweepItem() {
     PORTEbits.RE0 = 1; // Turn on the upper motor
-    delay(400); // Control delay to avoid the need for a proper one-shot
-    while(PORTCbits.RC3 == 0); // Wait until the motor finishes a sweep
+    delay(200); // Control delay to avoid the need for a proper one-shot
+    while(PORTCbits.RC3 == 0 && !debounceButton(1, 3)); // Wait until the motor finishes a sweep
     PORTEbits.RE0 = 0; // Turn off the motor
-    return 1;
+    return 1; // Function finished its job
 }
 
 char resetSeparator() {
-    if(positionHole(1) && PORTCbits.RC3) {
+    if(positionHole(1) && PORTCbits.RC3 && debounceButton(1, 3)) {
         PORTEbits.RE0 = 0; // Turn off upper motor, for precaution
-        return 1;
+        return 1; // Function finished its job
     } 
-    PORTEbits.RE0 = PORTCbits.RC3? 0:1; // Have we reached the sensor? if so, stop, else, keep going.
-    return 0;
+    PORTEbits.RE0 = (PORTCbits.RC3 && debounceButton(1, 3))? 0:1; // Have we reached the sensor? if so, stop, else, keep going.
+    return 0; // Not finished yet
+}
+
+char debounceButton(char port, char button) {
+    delay(20); // Minimum delay time for debouncing
+    if(port) { // If port == 1, check the bits of port C
+        switch(button) {
+            case 0:
+                return PORTCbits.RC0;
+            case 1:
+                return PORTCbits.RC1;
+            case 2:
+                return PORTCbits.RC2;
+            case 3:
+                return PORTCbits.RC3;
+            case 4:
+                return PORTCbits.RC4;
+            case 5:
+                return PORTCbits.RC5;
+            case 6:
+                return PORTCbits.RC6;
+            case 7:
+                return PORTCbits.RC7;                    
+        }
+    } else { // If port == 0, check the bits of port a
+        switch(button) {
+            case 0:
+                return PORTAbits.RA0;
+            case 1:
+                return PORTAbits.RA1;
+            case 2:
+                return PORTAbits.RA2;
+            case 3:
+                return PORTAbits.RA3;
+            case 4:
+                return PORTAbits.RA4;
+            case 5:
+                return PORTAbits.RA5;
+            case 6:
+                return PORTAbits.RA6;
+            case 7:
+                return PORTAbits.RA7;                    
+        }
+    }
 }

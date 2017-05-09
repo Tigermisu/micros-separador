@@ -41,5 +41,7 @@ char queryContainerCapacity(char containerNumber);
 
 char displayADResults();
 
+char debounceButton(char port, char button);
+
 #endif
 
