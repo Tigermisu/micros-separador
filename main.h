@@ -37,9 +37,9 @@ void enqueueMessage(char message[]);
 
 void consumeMessageQueue(long nextMinTime);
 
-char queryContainerCapacity(char containerNumber);
+char queryContainerCapacity(char containerNumber, char displayResult);
 
-char displayADResults();
+char displayADResults(char displayResult);
 
 char debounceButton(char port, char button);
 
